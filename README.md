@@ -227,10 +227,18 @@ We recommend running this command first to ensure CheckMate is installed and fun
 CheckMate: LLM-Powered Approximate Intermittent Computing. Abdur-Rahman Ibrahim Sayyid-Ali, Abdul Rafay, Muhammad Abdullah Soomro, Muhammad Hamad Alizai, Naveed Anwar Bhatti. 2024
 
 ```bibtex
-@inproceedings{Ali2024CheckMate,
-  title={{CheckMate}:LLM-Powered Approximate Intermittent Computing,
-  author={Sayyid-Ali, Abdur-Rahman Ibrahim and Rafay, Abdul and Soomro, Muhammad Abdullah and Alizai, Muhammad Hamad and Bhatti, Naveed Anwar},
-  year={2024},
-  booktitle={arXiv},
+@inbook{10.1145/3715014.3722056,
+author = {Sayyid-Ali, Abdur-rahman Ibrahim and Rafay, Abdul and Soomro, Muhammad Abdullah and Alizai, Muhammad Hamad and Bhatti, Naveed Anwar},
+title = {CheckMate: LLM-Powered Approximate Intermittent Computing},
+year = {2025},
+isbn = {9798400714795},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3715014.3722056},
+abstract = {Batteryless IoT systems face energy constraints exacerbated by checkpointing overhead. Approximate computing offers solutions but demands manual expertise, limiting scalability. This paper presents CheckMate, an automated framework leveraging LLMs for context-aware code approximations. CheckMate integrates validation of LLM-generated approximations to ensure correct execution and employs Bayesian optimization to fine-tune approximation parameters autonomously, eliminating the need for developer input. Tested across six IoT applications, it reduces power cycles by up to 60\% with an accuracy loss of just 8\%, outperforming semi-automated tools like ACCEPT in speedup and accuracy. CheckMate's results establish it as a robust, user-friendly tool and a foundational step toward automated approximation frameworks for intermittent computing.},
+booktitle = {Proceedings of the 23rd ACM Conference on Embedded Networked Sensor Systems},
+pages = {71–87},
+numpages = {17}
 }
+
 ```
