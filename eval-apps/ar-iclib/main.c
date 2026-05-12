@@ -23,7 +23,7 @@
 // Number of samples to discard before recording training set
 #define NUM_WARMUP_SAMPLES 3
 #define ACCEL_WINDOW_SIZE 3
-#define MODEL_SIZE 16
+#define MODEL_SIZE 32
 #define SAMPLE_NOISE_FLOOR 10 // TODO: made up value
 // Number of classifications to complete in one experiment
 #define SAMPLES_TO_COLLECT 128
@@ -103,12 +103,12 @@ static uint16_t sqrt16(uint32_t x);
 
 /* ------ Function definitions ------ */
 static void ACCEL_singleSample(threeAxis_t_8 *result) {
-  static unsigned int _v_seed = 4;
+  static unsigned int _v_seed = 2;
 
   unsigned int seed = _v_seed;
-  result->x = (seed * 17) % 85;
-  result->y = (seed * 17 * 17) % 85;
-  result->z = (seed * 17 * 17 * 17) % 85;
+  result->x = (seed * 17) % 121;
+  result->y = (seed * 18 * 17) % 121;
+  result->z = (seed * 17 * 17 * 17) % 121;
   _v_seed = ++seed;
 }
 
@@ -277,19 +277,24 @@ void recognize(model_t *model) {
     record_stats(&stats, class);
   }
 #ifdef LOCAL_RUN
-    printf("Total: %d, Moving: %d, Stationary: %d\n", stats.totalCount, stats.movingCount, stats.stationaryCount);
+    printf("%d,%d\n", stats.movingCount, stats.stationaryCount);
 #endif
 }
 
 void main() {
-    train(model.moving);
-    train(model.stationary);
-    recognize(&model);
+
+    for(int i=0 ; i<6; i++)
+    {
+        train(model.moving);
+        train(model.stationary);
+        recognize(&model);
+    }
 
 #ifndef LOCAL_RUN
     indicate_end();
 #endif
 }
+
 
 static uint16_t sqrt16(uint32_t x) {
   uint16_t hi = 0xffff;

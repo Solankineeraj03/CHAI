@@ -34,6 +34,9 @@ def joinJsonFiles(directory, name_template, output_filename): #Cat 3
     # List all files in the directory
     for filename in os.listdir(directory):
         # Check if the file is a JSON file and contains the name_template
+        # Skip the output file itself to avoid self-inclusion
+        if filename == output_filename:
+            continue
         if filename.endswith(".json") and name_template in filename:
             file_path = os.path.join(directory, filename)
 

@@ -33,7 +33,15 @@ def generateGroundTruth(appName):
         cmd = f"./main && mv img.pgm out.pgm"
         subprocess.run(cmd, shell=True)
 
-    elif appName == "stringsearch" or appName == "stringsearch-iclib" or appName == "ar-iclib" or appName == "fft-iclib" or appName == "bc-iclib":
+    elif appName == "accept-sobel":
+        # Make clean and make main
+        subprocess.run("make clean", shell=True, stdout=subprocess.DEVNULL)
+        subprocess.run("make main", shell=True, stdout=subprocess.DEVNULL)
+
+        cmd = f"./main && mv img.pgm out.pgm"
+        subprocess.run(cmd, shell=True)
+
+    elif appName == "stringsearch" or appName == "stringsearch-iclib" or appName == "ar-iclib" or appName == "fft-iclib" or appName == "bc-iclib" or appName == "radix-bm" or appName == "segment-bm" or appName == "accept-activityrec":
         # Make clean and make main
         subprocess.run("make clean", shell=True, stdout=subprocess.DEVNULL)
         subprocess.run("make main", shell=True, stdout=subprocess.DEVNULL)
@@ -41,7 +49,7 @@ def generateGroundTruth(appName):
         # Run the program and save the output to a output.csv file
         subprocess.run("./main > ground_truth.csv", shell=True)
 
-    elif appName == "fft" or appName == "lqi" or appName == "lqi-iclib":
+    elif appName == "fft" or appName == "lqi" or appName == "lqi-iclib" or appName == "link-estimator":
         # Make clean and make main
         subprocess.run("make clean", shell=True, stdout=subprocess.DEVNULL)
         subprocess.run("make main", shell=True, stdout=subprocess.DEVNULL)
@@ -93,6 +101,19 @@ def sobelError(pathToCodebase):
 
     original_image = load_pgm_opencv(ground_truth)
     approximated_image = load_pgm_opencv(predicted)
+
+    # Guard: if compilation or execution failed, return max error as penalty
+    if original_image is None or approximated_image is None:
+        Dprint(f"Debug: predicted.pgm missing or unreadable — returning penalty error 0.5")
+        os.chdir(cwd)
+        return 0.5
+
+    # Guard: shape mismatch (e.g., empty output image)
+    if original_image.shape != approximated_image.shape:
+        Dprint(f"Debug: shape mismatch {original_image.shape} vs {approximated_image.shape} — returning penalty error 0.5")
+        os.chdir(cwd)
+        return 0.5
+
     ssim_score = ssim(original_image, approximated_image)
 
     # # Change back to the original working directory
@@ -379,6 +400,68 @@ def arError(pathToCodebase):
     error = calculate_mape_from_csv(f"{pathToCodebase}/output.csv",f"{pathToCodebase}/ground_truth.csv")
 
     return error
+
+def radixbmError(pathToCodebase):
+    """Error function for radix-bm benchmark. Uses relative error on single hash output."""
+    cwd = os.getcwd()
+    os.chdir(pathToCodebase)
+
+    subprocess.run("make clean", shell=True, stdout=subprocess.DEVNULL)
+    subprocess.run("make main", shell=True, stdout=subprocess.DEVNULL)
+    subprocess.run("./main > output.csv", shell=True)
+
+    os.chdir(cwd)
+
+    # Read ground truth and predicted values
+    with open(f"{pathToCodebase}/ground_truth.csv", "r") as f:
+        gt_val = float(f.read().strip())
+    with open(f"{pathToCodebase}/output.csv", "r") as f:
+        pred_val = float(f.read().strip())
+
+    if gt_val == 0:
+        error = 0.0 if pred_val == 0 else 1.0
+    else:
+        error = abs(gt_val - pred_val) / abs(gt_val)
+
+    Dprint(f"Radix-BM Error: {error}")
+    return error
+
+
+def acceptSobelError(pathToCodebase):
+    """Error function for ACCEPT sobel benchmark. Uses SSIM like sobel-iclib."""
+    return sobelError(pathToCodebase)
+
+
+def acceptActivityrecError(pathToCodebase):
+    """Error function for ACCEPT activity recognition benchmark. Uses MAPE like ar-iclib."""
+    return arError(pathToCodebase)
+
+
+def segmentbmError(pathToCodebase):
+    """Error function for segment-bm benchmark. Uses relative error on single hash output."""
+    cwd = os.getcwd()
+    os.chdir(pathToCodebase)
+
+    subprocess.run("make clean", shell=True, stdout=subprocess.DEVNULL)
+    subprocess.run("make main", shell=True, stdout=subprocess.DEVNULL)
+    subprocess.run("./main > output.csv", shell=True)
+
+    os.chdir(cwd)
+
+    # Read ground truth and predicted values
+    with open(f"{pathToCodebase}/ground_truth.csv", "r") as f:
+        gt_val = float(f.read().strip())
+    with open(f"{pathToCodebase}/output.csv", "r") as f:
+        pred_val = float(f.read().strip())
+
+    if gt_val == 0:
+        error = 0.0 if pred_val == 0 else 1.0
+    else:
+        error = abs(gt_val - pred_val) / abs(gt_val)
+
+    Dprint(f"Segment-BM Error: {error}")
+    return error
+
 
 def bitcountError(pathToCodebase):
     def calculate_mape_from_csv(pred_file_path, gt_file_path):

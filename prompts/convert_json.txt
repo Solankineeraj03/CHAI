@@ -1,11 +1,19 @@
 {add_error}
 I would like you to reformat the code you just generated into a JSON object. The JSON should contain the following information:
 
-    1. approximated_code: The full block of code that you generated.
-    2. knob_variables: A list of all the variable names that can be tuned or adjusted in the code. These are the "knobs."
-    3. knob_ranges: The possible ranges of each knob variable (in the form of minimum and maximum values or specific values, if applicable).
-    4. knob_increments: The increments by which each knob variable can change. Specify whether the increment is a Real number or an Integer.
+    1. approxmated_code: The full block of code that you generated. Must be a single string with newlines escaped as \n.
+    2. knob_variables: A string representation of a list of all the knob variable names. Example: "['loop_skip', 'threshold']". If no knob variables, return "[]".
+    3. knob_ranges: A string representation of the ranges for each knob variable. Example: "[{{'loop_skip': [1, 5]}}, {{'threshold': [8, 20]}}]". If no knob variables, return "[]".
+    4. knob_increments: A string representation of the step type for each knob. Example: "[{{'loop_skip': 'Integer'}}, {{'threshold': 'Real'}}]". If no knob variables, return "[]".
 
-Format the output as a clean and structured JSON object as described here:
+IMPORTANT: The JSON field name is "approxmated_code" (without the 'i' in approximated). All knob fields must be strings, not arrays.
+
+Return ONLY a valid JSON object with double-quoted keys and string values. Do NOT wrap it in markdown code fences. Example:
+{{
+  "approxmated_code": "int foo() {{\n  return 0;\n}}",
+  "knob_variables": "['x']",
+  "knob_ranges": "[{{'x': [1, 10]}}]",
+  "knob_increments": "[{{'x': 'Integer'}}]"
+}}
 
 {output_instuctions}

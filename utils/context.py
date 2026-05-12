@@ -1,11 +1,13 @@
 from utils.utils import getNodeParent, Dprint
 from config.config import (
     GIVE_FORMAT_EXAMPLES,
-    GIVE_LOOP_PERF_EXMAPLES
+    GIVE_LOOP_PERF_EXMAPLES,
+    GIVE_NEW_TECHNIQUE_EXAMPLES
 )
 from config.globals import (
     GLOBAL_CONTEXT,
     LOOP_PERF_EXAMPLES,
+    NEW_TECHNIQUE_EXAMPLES,
     APPROXIMATION_FORMAT_EXAMPLES,
     CHAT_HISTORY,
     CODE_BASE_SUMMARY,
@@ -25,6 +27,8 @@ def manufacturerContext(PDG, this_function): #Cat 6
     
     if GIVE_LOOP_PERF_EXMAPLES:
         this_context += LOOP_PERF_EXAMPLES
+    if GIVE_NEW_TECHNIQUE_EXAMPLES:
+        this_context += NEW_TECHNIQUE_EXAMPLES
     if GIVE_FORMAT_EXAMPLES:
         this_context += APPROXIMATION_FORMAT_EXAMPLES
     if CODE_BASE_SUMMARY != []:

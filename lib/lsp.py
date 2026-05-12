@@ -172,7 +172,11 @@ def lsp_extractor(file_path, positions_file_flag=False, print_flag=False):
     
     # Terminate the clangd process
     process.terminate()
-    process.wait()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
     extracted_entities = extract_function_content(file_path, symbols_response)
 
@@ -228,6 +232,21 @@ def lsp_patcher(dir_path, json_file_name):
         if file_lines is None:
             continue
 
+        # Strip any existing knob variable declaration blocks to prevent accumulation
+        # across repeated lsp_patcher calls (e.g., during BayesOpt iterations)
+        cleaned_lines = []
+        skip = False
+        for line in file_lines:
+            if '/* Knob Variables Declaration Start */' in line:
+                skip = True
+                continue
+            if '/* Knob Variables Declaration End */' in line:
+                skip = False
+                continue
+            if not skip:
+                cleaned_lines.append(line)
+        file_lines = cleaned_lines
+
         did_open(process, file_path, ''.join(file_lines))
         Dprint(f"LSP didOpen request for {file_path}")
 
@@ -264,4 +283,8 @@ def lsp_patcher(dir_path, json_file_name):
 
     # Terminate the LSP process
     process.terminate()
-    process.wait()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)

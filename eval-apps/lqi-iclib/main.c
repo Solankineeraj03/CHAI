@@ -18,29 +18,17 @@
 
 double calculateDeliveryRatio(PacketLog logs[], int size)
 {
-    /* Knob Variables Declaration Start */
-    int precision_knob = 2;
-    int loop_truncation_knob = 65;
-    /* Knob Variables Declaration End */
-
-    // Use fixed-point arithmetic to reduce floating-point operations
     double total_packets = 0;
     double delivered_weight = 0;
-
-    // Loop truncation strategy
-    int truncated_size = (size * loop_truncation_knob) / 100;
-
-    for (int i = 0; i < truncated_size; i++)
+    for (int i = 0; i < size; i++)
     {
-        total_packets += 1; // Increment by precision factor
+        total_packets += 1.0;
         if (logs[i].status == 1)
         {
-            delivered_weight += (logs[i].weight);
+            delivered_weight += logs[i].weight;
         }
     }
-
-    // Convert back to floating-point for the result
-    return ((double)delivered_weight / (double)total_packets);
+    return (delivered_weight / total_packets);
 }
 
 void reverseArray(int arr[], int size) {

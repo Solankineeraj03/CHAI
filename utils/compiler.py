@@ -52,9 +52,25 @@ def queryGPT(chat, chat_history, files_list, error_message=""):
 
     chain = prompt | chat
 
-    response = chain.invoke(
-        input={"conversation": list(chat_history), "next_prompt": query}
-    )
+    import time as _time
+    _max_retries = 5
+    for _attempt in range(1, _max_retries + 1):
+        try:
+            response = chain.invoke(
+                input={"conversation": list(chat_history), "next_prompt": query}
+            )
+            break
+        except Exception as _e:
+            _err_str = str(_e).lower()
+            if '429' in _err_str or 'rate' in _err_str:
+                _wait = 60 * _attempt
+                Dprint(f"[queryGPT] Rate limit hit, waiting {_wait}s (attempt {_attempt}/{_max_retries})...")
+                _time.sleep(_wait)
+            else:
+                Dprint(f"[queryGPT] Error (attempt {_attempt}/{_max_retries}): {_e}")
+                _time.sleep(5)
+            if _attempt == _max_retries:
+                raise
 
     chat_history.add(formatMessageForHistory(query, False))
     chat_history.add(formatMessageForHistory(response.content, True))
@@ -115,14 +131,18 @@ def generateMakeFile(target_path):
     model = os.getenv("LLM_MODEL")
     if API_NAME == "OpenAI":
         api_key = os.getenv("OPENAI_API_KEY")
-        chat = ChatOpenAI(api_key=api_key, temperature=0.7, model=model)
+        chat = ChatOpenAI(api_key=api_key, temperature=0.7, model=model, max_retries=5, timeout=120)
     elif API_NAME == "Anthropic":
         api_key = os.getenv("ANTHROPIC_API_KEY")
         chat = ChatAnthropic(api_key=api_key,model=model)
+    elif API_NAME == "HuggingFace":
+        # Re-use the global LLM from lib/llm.py to avoid loading model twice
+        from lib.llm import llmLangChain
+        chat = llmLangChain
 
-    if not api_key or not model:
-        Dprint("Error: Missing OpenAI API key or model in environment variables.")
-        return
+    if chat is None:
+        Dprint("Error: No LLM configured for compilation. Check API_NAME in config.py.")
+        return 1
 
     chat_history = FixedSizePairList(5)
 
@@ -132,9 +152,88 @@ def generateMakeFile(target_path):
 
     makefile_path = os.path.join(target_path, "Makefile")
 
+    def _fix_makefile_tabs(content):
+        """Ensure Makefile recipe lines use tabs, not spaces.
+        A recipe line is any line after a target rule (line ending with :) that starts with whitespace."""
+        import re as _re
+        # Strip markdown fences if LLM wraps output
+        content = _re.sub(r'^```(?:makefile|make)?\s*\n', '', content, flags=_re.MULTILINE)
+        content = _re.sub(r'\n```\s*$', '', content)
+        # Replace leading spaces (4 or 2 spaces) with a tab on recipe lines
+        lines = content.split('\n')
+        fixed = []
+        in_recipe = False
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped and not stripped.startswith('#') and ':' in stripped and not stripped.startswith('\t') and '=' not in stripped.split(':')[0]:
+                # This looks like a target rule
+                in_recipe = True
+                fixed.append(line)
+            elif in_recipe and line and line[0] in (' ', '\t'):
+                # Recipe line — ensure it starts with tab
+                fixed.append('\t' + stripped)
+            else:
+                if stripped == '':
+                    in_recipe = False
+                fixed.append(line)
+        return '\n'.join(fixed)
+
+    def _strip_missing_deps(content, directory):
+        """Remove dependencies on files that don't exist in the target directory."""
+        import re as _re
+        existing_files = set(os.listdir(directory))
+        lines = content.split('\n')
+        fixed = []
+        for line in lines:
+            # Match target rule lines like "main.o: main.c header.h"
+            m = _re.match(r'^(\S+)\s*:\s*(.+)$', line)
+            if m and '=' not in line:
+                target = m.group(1)
+                deps = m.group(2).split()
+                # Keep only deps that exist or are variables/patterns
+                valid_deps = [d for d in deps if d in existing_files or '$' in d or '%' in d]
+                if valid_deps:
+                    fixed.append(f"{target}: {' '.join(valid_deps)}")
+                else:
+                    fixed.append(f"{target}:")
+            else:
+                fixed.append(line)
+        return '\n'.join(fixed)
+
+    def _generate_fallback_makefile(directory):
+        """Generate a simple, reliable Makefile based on actual source files present."""
+        import glob
+        c_files = sorted(glob.glob(os.path.join(directory, '*.c')))
+        if not c_files:
+            return None
+        c_basenames = [os.path.basename(f) for f in c_files]
+        o_basenames = [f.replace('.c', '.o') for f in c_basenames]
+        
+        lines = [
+            'CC=gcc',
+            'CFLAGS=-c -O2 -DLOCAL_RUN',
+            '',
+        ]
+        # Individual .o rules
+        for c, o in zip(c_basenames, o_basenames):
+            lines.append(f'{o}: {c}')
+            lines.append(f'\t$(CC) $(CFLAGS) {c} -o {o}')
+            lines.append('')
+        
+        # Link rule
+        lines.append(f"main: {' '.join(o_basenames)}")
+        lines.append(f"\t$(CC) {' '.join(o_basenames)} -o main -lm")
+        lines.append('')
+        lines.append('clean:')
+        lines.append(f"\trm -f {' '.join(o_basenames)} main")
+        lines.append('')
+        return '\n'.join(lines)
+
     for _ in range(10):
+        makefile_content = _fix_makefile_tabs(response)
+        makefile_content = _strip_missing_deps(makefile_content, target_path)
         with open(makefile_path, "w") as file:
-            file.write(response)
+            file.write(makefile_content)
 
         success, error_message = compileAndLog(target_path)
         
@@ -144,7 +243,18 @@ def generateMakeFile(target_path):
 
         response = queryGPT(chat, chat_history, files_list, error_message)
 
-    Dprint("Compilation failed after 10 attempts\n")
+    # All LLM attempts failed — try a deterministic fallback Makefile
+    Dprint("LLM Makefile generation failed after 10 attempts. Trying fallback Makefile...\n")
+    fallback = _generate_fallback_makefile(target_path)
+    if fallback:
+        with open(makefile_path, "w") as file:
+            file.write(fallback)
+        success, error_message = compileAndLog(target_path)
+        if success:
+            Dprint("Compilation successful with fallback Makefile\n")
+            return 0
+
+    Dprint("Compilation failed after 10 attempts + fallback\n")
     return 1
 
 def compileTest(function): 

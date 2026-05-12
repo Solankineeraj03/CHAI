@@ -36,38 +36,50 @@ def createRTLFile():
     files_list = getFilesList(target_path)
 
     original = sys.stdout
+    max_retries = int(os.environ.get("CHECKMATE_PDG_MAX_RETRIES", "5"))
+    last_error = None
 
+    try:
+        for attempt in range(1, max_retries + 1):
+            with open(log_file, 'w') as file:
+                file.write('')
+            log_handle = open(log_file, 'w')
+            sys.stdout = log_handle
+            try:
+                response = ""
+                if not os.path.exists(os.path.join(target_path, "compiler_log.txt")):
+                    with open(os.path.join(target_path, "compiler_log.txt"), "w") as f:
+                        pass  # Just create the file
+                with open(os.path.join(target_path, "compiler_log.txt"), "r") as output_file:
+                    response = generateExpandMakeFile(files_list, output_file.read())
 
-    while True:
-        
-        with open(log_file, 'w') as file:
-            file.write('')
-        sys.stdout = open(log_file, 'w')
-        try:
-            response = ""
-            if not os.path.exists(os.path.join(target_path, "compiler_log.txt")):
-                with open(os.path.join(target_path, "compiler_log.txt"), "w") as f:
-                    pass  # Just create the file
-            with open(os.path.join(target_path, "compiler_log.txt"), "r") as output_file:
-                response = generateExpandMakeFile(files_list, output_file.read())
+                with open(os.path.join(target_path, "Makefile"), "w") as file:
+                    file.write(response)
 
-            with open(os.path.join(target_path, "Makefile"), "w") as file:
-                file.write(response)
+                with open(os.path.join(target_path, "compiler_log.txt"), "w") as output_file:
+                    subprocess.run("make", shell=True, check=True, cwd=target_path, stdout=output_file, stderr=subprocess.STDOUT)
 
-            with open(os.path.join(target_path, "compiler_log.txt"), "w") as output_file:
-                subprocess.run("make", shell=True, check=True, cwd=target_path, stdout=output_file, stderr=subprocess.STDOUT)
+                subprocess.run("egypt *.expand | dot -ofile", shell=True, check=True, cwd=target_path)
 
-            subprocess.run("egypt *.expand | dot -ofile", shell=True, check=True, cwd=target_path)
+                subprocess.run("make clean", shell=True, check=True, cwd=target_path)
 
-            subprocess.run("make clean", shell=True, check=True, cwd=target_path)
-            
-            Dprint('Success\n')
-            break
-            # return 0  # Successful compilation
-        except Exception as e:
-            Dprint(e)
+                sys.stdout = original
+                log_handle.close()
+                Dprint('Success\n')
+                return
+            except Exception as e:
+                sys.stdout = original
+                log_handle.close()
+                last_error = e
+                Dprint(f"PDG generation attempt {attempt}/{max_retries} failed: {e}")
 
-    sys.stdout = original
+        raise RuntimeError(
+            f"createRTLFile: PDG generation failed after {max_retries} attempts. "
+            f"Last error: {last_error}. "
+            f"See {log_file} and {os.path.join(target_path, 'compiler_log.txt')} for details."
+        )
+    finally:
+        sys.stdout = original
         
 
 # --- PDG Generation ---

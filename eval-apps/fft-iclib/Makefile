@@ -1,5 +1,5 @@
 main:
-	gcc -o main main.c -DLOCAL_RUN -lm
+	gcc -o main main.c -DLOCAL_RUN
 
 clean:
 	rm -f main main.o main.elf

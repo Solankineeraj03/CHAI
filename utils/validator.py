@@ -130,9 +130,12 @@ def validateFunction(functionDict):
     """
 
     # Extract knob variables, ranges, and step sizes from functionDict
-    knob_variables = ast.literal_eval(functionDict["knobVariables"])
-    knob_ranges = ast.literal_eval(functionDict["knobRanges"])
-    knob_step_sizes = ast.literal_eval(functionDict["knobStepSize"])
+    raw_vars = functionDict["knobVariables"]
+    knob_variables = ast.literal_eval(raw_vars) if isinstance(raw_vars, str) else raw_vars
+    raw_ranges = functionDict["knobRanges"]
+    knob_ranges = ast.literal_eval(raw_ranges) if isinstance(raw_ranges, str) else raw_ranges
+    raw_steps = functionDict["knobStepSize"]
+    knob_step_sizes = ast.literal_eval(raw_steps) if isinstance(raw_steps, str) else raw_steps
 
     functionName = functionDict["functionName"]
 
@@ -211,3 +214,72 @@ def validateFunction(functionDict):
             break
 
     Dprint(f"Successfully Validated {functionName}")
+
+
+def validateEarlyExit(code_string, knob_names, knob_ranges):
+    """
+    Validates that early-exit approximation code follows safety constraints.
+    
+    Args:
+        code_string (str): The approximated code with early-exit
+        knob_names (list): List of knob variable names (e.g., ['convergence_threshold_knob'])
+        knob_ranges (list): List of [min, max] ranges for each knob
+    
+    Returns:
+        bool: True if code is safe for early-exit, False otherwise
+    """
+    import re
+    
+    # Rule 1: Check that convergence metric is computed BEFORE threshold check
+    # Pattern: Look for convergence/metric computation (e.g., change = fabs(...))
+    metric_patterns = [
+        r'(change|error|distance|diff|metric)\s*=',  # Metric assignment
+        r'fabs\s*\(',  # Absolute value computation
+        r'sqrt\s*\(',  # Square root (often used in distance metrics)
+    ]
+    
+    metric_found = any(re.search(pattern, code_string, re.IGNORECASE) for pattern in metric_patterns)
+    if not metric_found:
+        Dprint("Warning: No convergence metric computation found in early-exit code")
+        return False
+    
+    # Rule 2: Check for safe exit patterns (break or return)
+    safe_exit_patterns = [r'break\s*;', r'return\s*;', r'return\s+[\w\d_]+\s*;']
+    safe_exit_found = any(re.search(pattern, code_string) for pattern in safe_exit_patterns)
+    if not safe_exit_found:
+        Dprint("Error: No safe exit statement (break or return) found in early-exit code")
+        return False
+    
+    # Rule 3: Check for unsafe patterns (while True, infinite loops, hardware-specific code)
+    unsafe_patterns = [
+        r'while\s*\(\s*1\s*\)',  # while(1) infinite loop
+        r'while\s*\(\s*true\s*\)',  # while(true) 
+        r'for\s*\(\s*;\s*;\s*\)',  # for(;;) infinite loop
+        r'__asm__|asm\s*\{',  # Inline assembly
+        r'volatile\s+',  # Volatile (hardware-specific)
+    ]
+    
+    for pattern in unsafe_patterns:
+        if re.search(pattern, code_string, re.IGNORECASE):
+            Dprint(f"Error: Unsafe pattern found in early-exit code: {pattern}")
+            return False
+    
+    # Rule 4: Validate knob ranges (threshold should be in reasonable bounds)
+    for knob_name, knob_range in zip(knob_names, knob_ranges):
+        if len(knob_range) != 2:
+            Dprint(f"Error: Invalid knob range for {knob_name}: {knob_range}")
+            return False
+        
+        min_val, max_val = knob_range
+        if min_val >= max_val:
+            Dprint(f"Error: Knob range invalid for {knob_name}: min={min_val}, max={max_val}")
+            return False
+        
+        # Check for pathological ranges (e.g., threshold causing division by zero)
+        if 'threshold' in knob_name.lower() and min_val == max_val:
+            Dprint(f"Warning: Zero-range threshold knob {knob_name} may be ineffective")
+            return False
+    
+    Dprint(f"Early-exit validation passed for knobs: {knob_names}")
+    return True
+

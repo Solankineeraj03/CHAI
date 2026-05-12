@@ -1,1 +1,8 @@
-["cexp", "cos", "exp", "fft", "fft_radix2", "fft_slow", "main", "sin"]
+[
+  "cexp",
+  "cos",
+  "exp",
+  "fft_radix2",
+  "main",
+  "sin"
+]

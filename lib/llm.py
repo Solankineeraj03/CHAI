@@ -4,6 +4,9 @@ from langchain_core.prompts import (
     ChatPromptTemplate,
 )
 
+# Lazy imports for HuggingFace (loaded only when API_NAME == 'HuggingFace')
+# from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
+
 import dotenv
 import os
 import json
@@ -42,10 +45,62 @@ model = os.getenv("LLM_MODEL")
 llmLangChain = None
 if API_NAME == "OpenAI":
     api_key = os.getenv("OPENAI_API_KEY")
-    llmLangChain = ChatOpenAI(api_key=api_key, temperature=0, model=model)
+    llmLangChain = ChatOpenAI(api_key=api_key, temperature=0, model=model, max_tokens=2048, max_retries=5, timeout=120)
 elif API_NAME == "Anthropic":
     api_key = os.getenv("ANTHROPIC_API_KEY")
-    llmLangChain = ChatAnthropic(api_key=api_key,model=model, temperature=0)
+    llmLangChain = ChatAnthropic(api_key=api_key,model=model, temperature=0, max_tokens=8192)
+elif API_NAME == "HuggingFace":
+    from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+    import torch
+
+    hf_token = os.getenv("HF_TOKEN")
+    print(f"[HuggingFace] Loading {model} onto GPU...")
+    tokenizer = AutoTokenizer.from_pretrained(model, token=hf_token)
+
+    # Use 4-bit quantization for 70B+ models to fit on 2x RTX 3090 (48GB)
+    import os as _os
+    _os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    use_4bit = "70B" in model.upper() or "70b" in model
+    if use_4bit:
+        print(f"[HuggingFace] Using 4-bit NF4 quantization for {model}")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        # Balance model across GPUs, leave headroom for KV cache
+        n_gpus = torch.cuda.device_count()
+        max_mem = {i: "22GiB" for i in range(n_gpus)}
+        print(f"[HuggingFace] max_memory = {max_mem}")
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            model,
+            quantization_config=bnb_config,
+            device_map="auto",
+            max_memory=max_mem,
+            token=hf_token,
+        )
+    else:
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            model,
+            torch_dtype=torch.float16,
+            device_map="auto",
+            token=hf_token,
+        )
+
+    pipe = pipeline(
+        "text-generation",
+        model=hf_model,
+        tokenizer=tokenizer,
+        max_new_tokens=2048,
+        temperature=0.01,            # near-deterministic (0.0 disables sampling)
+        do_sample=True,
+        return_full_text=False,
+    )
+    hf_llm = HuggingFacePipeline(pipeline=pipe)
+    llmLangChain = ChatHuggingFace(llm=hf_llm)
+    print(f"[HuggingFace] {model} loaded successfully.")
 
 print(model)
 
@@ -79,6 +134,8 @@ def purposeIdentificationFunction(
 
     function_purpose = ""
     output_purpose = ""
+    MAX_PURPOSE_RETRIES = 5
+    purpose_retries = 0
 
     while True:
         try:    
@@ -95,11 +152,14 @@ def purposeIdentificationFunction(
             function_purpose = output_purpose.content
             break
         except Exception as error:
+            purpose_retries += 1
+            print(f"[purposeID] Retry {purpose_retries}/{MAX_PURPOSE_RETRIES} for {this_function}: {error}")
+            if purpose_retries >= MAX_PURPOSE_RETRIES:
+                print(Fore.RED + f"  [purposeID] {this_function} failed after {MAX_PURPOSE_RETRIES} attempts." + Style.RESET_ALL)
+                break
             if PRINT_LLM_CONVO:
                 print(Fore.RED + str(output_purpose))
                 print(Style.RESET_ALL)
-            
-            print(error)
 
     this_purpose_convo = [
         formatMessageForHistory(no_context_human_prompt, False),
@@ -144,6 +204,8 @@ def annotateFunction(
     output_annotation = ""
     this_error = ""
     last_error_convo = []
+    MAX_ANNO_RETRIES = 5
+    anno_retries = 0
 
     while True:
         try:    
@@ -162,6 +224,11 @@ def annotateFunction(
 
             break
         except Exception as error:
+            anno_retries += 1
+            print(f"[annotate] Retry {anno_retries}/{MAX_ANNO_RETRIES} for {this_function}: {error}")
+            if anno_retries >= MAX_ANNO_RETRIES:
+                print(Fore.RED + f"  [annotate] {this_function} failed after {MAX_ANNO_RETRIES} attempts." + Style.RESET_ALL)
+                break
             if PRINT_LLM_CONVO:
                 print(Fore.RED + str(output_annotation))
                 print(Style.RESET_ALL)
@@ -171,7 +238,6 @@ def annotateFunction(
                 formatMessageForHistory(output_annotation, True)
             ]
             this_error = f"There was a format error in your previous response. {error}. Make sure to follow the JSON format stated.\n\n"
-            print(error)
 
     this_annotation_convo = [
         formatMessageForHistory(no_context_human_prompt, False),
@@ -215,6 +281,8 @@ def planStepFunction(
 
     output_plan = ""
     last_error_convo = []
+    MAX_PLAN_RETRIES = 5
+    plan_retries = 0
 
     while True:
         try:    
@@ -233,20 +301,27 @@ def planStepFunction(
 
             break
         except Exception as error:
+            plan_retries += 1
+            print(f"[planning] Retry {plan_retries}/{MAX_PLAN_RETRIES} for {this_function}: {error}")
+            import gc; gc.collect(); torch.cuda.empty_cache()
+            if plan_retries >= MAX_PLAN_RETRIES:
+                print(Fore.RED + f"  [planning] {this_function} failed after {MAX_PLAN_RETRIES} attempts." + Style.RESET_ALL)
+                break
+            _plan_content = output_plan.content if hasattr(output_plan, 'content') else str(output_plan)
             if PRINT_LLM_CONVO:
-                print(Fore.RED + str(output_plan.content))
+                print(Fore.RED + _plan_content)
                 print(Style.RESET_ALL)
 
             last_error_convo = [
                 formatMessageForHistory(no_context_human_prompt, False),
-                formatMessageForHistory(output_plan, True)
+                formatMessageForHistory(_plan_content, True)
             ]
             this_error = f"There was a format error in your previous response. {error}. Make sure to follow the JSON format stated.\n\n"
-            print(error)
 
+    _plan_content_final = output_plan.content if hasattr(output_plan, 'content') else str(output_plan)
     this_convo = [
         formatMessageForHistory(no_context_human_prompt, False),
-        formatMessageForHistory(output_plan, True)
+        formatMessageForHistory(_plan_content_final, True)
     ]
     return this_convo
 
@@ -279,6 +354,8 @@ def approximateFunction(
     last_error = []
     this_error = prev_err
     output_approximated = ""
+    MAX_APPROX_RETRIES = 5
+    approx_retries = 0
 
     while True:
         try:
@@ -296,20 +373,29 @@ def approximateFunction(
             break
 
         except Exception as error:
+            approx_retries += 1
+            print(f"[approximateFunction] Retry {approx_retries}/{MAX_APPROX_RETRIES} for {this_function}: {error}")
+            import gc; gc.collect(); torch.cuda.empty_cache()
+            if approx_retries >= MAX_APPROX_RETRIES:
+                print(Fore.RED + f"  [approximateFunction] {this_function} failed after {MAX_APPROX_RETRIES} attempts — skipping." + Style.RESET_ALL)
+                break
+
             if PRINT_LLM_CONVO:
                 print(Fore.YELLOW + str(output_approximated))
                 print(Style.RESET_ALL)
 
+            # Guard: output_approximated may still be a plain string if OOM hit before any response
+            _approx_content = output_approximated.content if hasattr(output_approximated, 'content') else str(output_approximated)
             last_error = [
                 formatMessageForHistory(no_context_human_prompt, False),
-                formatMessageForHistory(output_approximated.content, True)
+                formatMessageForHistory(_approx_content, True)
             ]
             this_error = f"There was a format error in your previous response. {error}. Make sure to follow the JSON format stated.\n\n"
-            print(error)
 
+    _approx_content_final = output_approximated.content if hasattr(output_approximated, 'content') else str(output_approximated)
     this_convo = [
         formatMessageForHistory(no_context_human_prompt, False),
-        formatMessageForHistory(output_approximated.content, True)
+        formatMessageForHistory(_approx_content_final, True)
     ]
     return this_convo
 
@@ -322,8 +408,183 @@ def convertJson(
     ):
 
     global PRINT_LLM_CONVO
-    chain = llmLangChain | output_format_parser
+    # Use raw LLM (no piped parser) so we can manually extract JSON from 8B model output
+    chain_with_parser = llmLangChain | output_format_parser
+    chain_raw = llmLangChain
     this_error = ""
+
+    import re as _re
+    import json as _json
+    import ast as _ast
+
+    def _extract_json_from_text(text):
+        """Try to extract a JSON object from LLM text that may contain markdown/extra text.
+        Handles both JSON and Python dict formats, and maps 'approximated_code' to 'approxmated_code'.
+        Also normalizes value types (JSON arrays → strings) to match Pydantic model expectations."""
+        
+        def _normalize_keys(d):
+            """Map correctly-spelled key to the misspelled key the codebase expects."""
+            if isinstance(d, dict) and 'approximated_code' in d and 'approxmated_code' not in d:
+                d['approxmated_code'] = d.pop('approximated_code')
+            return d
+
+        def _normalize_values(d):
+            """Convert JSON arrays/objects in knob fields to the string format the codebase expects.
+            The Pydantic model declares knob_variables, knob_ranges, knob_increments as str fields,
+            so if the LLM returns actual lists, convert them."""
+            for key in ['knob_variables', 'knob_ranges', 'knob_increments']:
+                if key in d and isinstance(d[key], (list, dict)):
+                    d[key] = str(d[key])
+            return d
+
+        def _find_outermost_braces(s):
+            """Find the outermost { ... } respecting quotes (single and double).
+            Returns the substring including outer braces, or None."""
+            depth = 0
+            start = -1
+            in_str = False
+            str_char = None
+            i = 0
+            while i < len(s):
+                c = s[i]
+                if in_str:
+                    if c == '\\':
+                        i += 2  # skip escaped char
+                        continue
+                    if c == str_char:
+                        in_str = False
+                elif c in ('"', "'"):
+                    in_str = True
+                    str_char = c
+                elif c == '{':
+                    if depth == 0:
+                        start = i
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0 and start >= 0:
+                        return s[start:i+1]
+                i += 1
+            return None
+
+        def _try_parse(fragment):
+            """Try json.loads then ast.literal_eval on a text fragment."""
+            for parser in [_json.loads, _ast.literal_eval]:
+                try:
+                    result = parser(fragment)
+                    if isinstance(result, dict):
+                        return _normalize_values(_normalize_keys(result))
+                except Exception:
+                    pass
+            return None
+
+        # Strategy 1: Direct JSON/Python parse
+        result = _try_parse(text)
+        if result:
+            return result
+
+        # Strategy 2: Extract from markdown code fences (```json ... ``` or ``` ... ```)
+        # Use greedy .* between fences — the content between fences IS the JSON
+        fence_match = _re.search(r'```(?:json)?\s*(.*?)\s*```', text, _re.DOTALL)
+        if fence_match:
+            fenced_content = fence_match.group(1)
+            # Find outermost braces within fenced content (handles nested {} in C code)
+            json_fragment = _find_outermost_braces(fenced_content)
+            if json_fragment:
+                result = _try_parse(json_fragment)
+                if result:
+                    return result
+            # Also try the whole fenced content directly
+            result = _try_parse(fenced_content)
+            if result:
+                return result
+
+        # Strategy 3: Find outermost { ... } in the entire text
+        json_fragment = _find_outermost_braces(text)
+        if json_fragment:
+            result = _try_parse(json_fragment)
+            if result:
+                return result
+
+        # Strategy 4: Robust key-value extraction for badly-formatted output
+        # Handles embedded newlines, braces in C code, etc.
+        code_key = None
+        for k in ['approxmated_code', 'approximated_code']:
+            if k in text:
+                code_key = k
+                break
+        
+        if code_key:
+            try:
+                dict_start = text.find('{')
+                if dict_start >= 0:
+                    result = {}
+                    keys_to_find = [code_key, 'knob_variables', 'knob_ranges', 'knob_increments', 'discription']
+                    
+                    for i, key in enumerate(keys_to_find):
+                        key_patterns = ["'" + key + "'", '"' + key + '"']
+                        key_pos = -1
+                        for kp in key_patterns:
+                            pos = text.find(kp, dict_start)
+                            if pos >= 0:
+                                key_pos = pos
+                                break
+                        
+                        if key_pos < 0:
+                            continue
+                        
+                        colon_pos = text.find(':', key_pos + len(key))
+                        if colon_pos < 0:
+                            continue
+                        
+                        # Skip whitespace after colon
+                        val_cursor = colon_pos + 1
+                        while val_cursor < len(text) and text[val_cursor] in (' ', '\t', '\n', '\r'):
+                            val_cursor += 1
+                        
+                        if val_cursor >= len(text):
+                            continue
+
+                        # Value can be a string (quoted) or an array/object
+                        if text[val_cursor] in ("'", '"'):
+                            quote_char = text[val_cursor]
+                            # Find the next key or end to bound our search
+                            next_key_pos = len(text)
+                            for next_key in keys_to_find[i+1:]:
+                                for kp in ["'" + next_key + "'", '"' + next_key + '"']:
+                                    pos = text.find(kp, val_cursor + 1)
+                                    if 0 <= pos < next_key_pos:
+                                        next_key_pos = pos
+                            # Search backwards for closing quote
+                            val_end = -1
+                            for j in range(min(next_key_pos, len(text)) - 1, val_cursor, -1):
+                                if text[j] == quote_char:
+                                    val_end = j
+                                    break
+                            if val_end > val_cursor:
+                                result[key] = text[val_cursor + 1:val_end]
+                        elif text[val_cursor] == '[':
+                            # Array value — find matching ]
+                            bracket_depth = 0
+                            for j in range(val_cursor, len(text)):
+                                if text[j] == '[':
+                                    bracket_depth += 1
+                                elif text[j] == ']':
+                                    bracket_depth -= 1
+                                    if bracket_depth == 0:
+                                        arr_text = text[val_cursor:j+1]
+                                        try:
+                                            result[key] = str(_json.loads(arr_text))
+                                        except Exception:
+                                            result[key] = arr_text
+                                        break
+                    
+                    if code_key in result:
+                        return _normalize_keys(result)
+            except Exception:
+                pass
+
+        return None
 
     def get_human_prompt_json(context):
         common_prompt = {
@@ -346,6 +607,9 @@ def convertJson(
     last_error = []
     this_error = ""
     output_approximated = ""
+    MAX_JSON_RETRIES = 5
+    json_retries = 0
+    approximate_function = None
 
     while True:
         try:
@@ -353,7 +617,26 @@ def convertJson(
             human_prompt_json, no_context_prompt = get_human_prompt_json(context)
             log_conversation(no_context_prompt)
 
-            output_approximated = chain.invoke(input=human_prompt_json)
+            # Always get raw LLM response first (single call)
+            raw_response = chain_raw.invoke(input=human_prompt_json)
+            raw_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
+
+            # Try parsing with output_format_parser
+            parsed = None
+            try:
+                parsed = output_format_parser.parse(raw_text)
+                if isinstance(parsed, dict):
+                    output_approximated = parsed
+                else:
+                    output_approximated = parsed.dict() if hasattr(parsed, 'dict') else dict(parsed)
+            except Exception:
+                # Fallback: manually extract JSON/Python-dict from raw text
+                parsed = _extract_json_from_text(raw_text)
+                if parsed and isinstance(parsed, dict) and 'approxmated_code' in parsed:
+                    output_approximated = parsed
+                    print(f"[convertJson] Manual extraction succeeded for {this_function}")
+                else:
+                    raise KeyError(f"Could not extract JSON from LLM output (first 300 chars): {raw_text[:300]}")
 
             if PRINT_LLM_CONVO:
                 print(Fore.GREEN + str(output_approximated))
@@ -375,6 +658,19 @@ def convertJson(
             break
 
         except Exception as error:
+            json_retries += 1
+            print(f"[convertJson] Retry {json_retries}/{MAX_JSON_RETRIES} for {this_function}: {error}")
+            if json_retries >= MAX_JSON_RETRIES:
+                print(Fore.RED + f"  [convertJson] {this_function} failed JSON parsing after {MAX_JSON_RETRIES} attempts — returning empty." + Style.RESET_ALL)
+                approximate_function = {
+                    "functionName": this_function,
+                    "completeFunction": "",
+                    "knobVariables": "[]",
+                    "knobRanges": "[]",
+                    "knobStepSize": "[]",
+                }
+                break
+
             if PRINT_LLM_CONVO:
                 print(Fore.YELLOW + str(output_approximated))
                 print(Style.RESET_ALL)
@@ -384,7 +680,6 @@ def convertJson(
                 formatMessageForHistory(output_approximated, True)
             ]
             this_error = f"There was a format error in your previous response. {error}. Make sure to follow the JSON format stated.\n\n"
-            print(error)
 
     this_convo = [
         formatMessageForHistory(no_context_prompt, False),
@@ -424,6 +719,8 @@ def approximateFunctionOLD(
     last_error = []
     this_error = ""
     output_approximated = ""
+    MAX_OLD_RETRIES = 5
+    old_retries = 0
 
     while True:
         try:
@@ -460,6 +757,10 @@ def approximateFunctionOLD(
 
             compile_error = compileTest(function=this_function)
             if compile_error:
+                old_retries += 1
+                if old_retries >= MAX_OLD_RETRIES:
+                    print(Fore.RED + f"  [approximateFunctionOLD] {this_function} failed after {MAX_OLD_RETRIES} attempts — skipping." + Style.RESET_ALL)
+                    break
                 last_error = [
                     formatMessageForHistory(human_prompt_approx, False),
                     formatMessageForHistory(output_approximated, True)
@@ -470,6 +771,12 @@ def approximateFunctionOLD(
             break
 
         except Exception as error:
+            old_retries += 1
+            print(f"[approximateFunctionOLD] Retry {old_retries}/{MAX_OLD_RETRIES} for {this_function}: {error}")
+            if old_retries >= MAX_OLD_RETRIES:
+                print(Fore.RED + f"  [approximateFunctionOLD] {this_function} failed after {MAX_OLD_RETRIES} attempts — skipping." + Style.RESET_ALL)
+                break
+
             if PRINT_LLM_CONVO:
                 Dprint(Fore.YELLOW + str(output_approximated))
                 Dprint(Style.RESET_ALL)
@@ -479,7 +786,6 @@ def approximateFunctionOLD(
                 formatMessageForHistory(output_approximated, True)
             ]
             this_error = f"There was a format error in your previous response. {error}. Make sure to follow the JSON format stated.\n\n"
-            Dprint(error)
 
     return output_approximated, human_prompt_approx
 

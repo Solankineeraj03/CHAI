@@ -18,6 +18,7 @@ from config.globals import (
     APPROXIMATION_SCRIPT, 
     PLANNING_SCRIPT,
     LOOP_PERF_EXAMPLES, 
+    NEW_TECHNIQUE_EXAMPLES,
     APPROXIMATION_FORMAT_EXAMPLES,
     TARGET_FUNCTIONS_SCRIPT,
     CODE_BASE_SUMMARY,
@@ -155,6 +156,13 @@ def loadLoopPerfExamples(): #Cat 1
     
     ai_message = "Got it. When applying loop perforation, I'll add to the code in a truncation style approximation to the condition step of the loop."
     LOOP_PERF_EXAMPLES.append(formatMessageForHistory(ai_message,True))
+
+def loadNewTechniqueExamples(): #Cat 1
+    with open("prompts/FewShotExamples/newTechniqueExamples.txt",'r') as file:
+        NEW_TECHNIQUE_EXAMPLES.append(formatMessageForHistory(file.read(),False))
+    
+    ai_message = "Got it. I now have examples of early-exit, spatial downsampling, temporal decimation, bit-shift EWMA, nibble lookup, radix variation, pattern segmentation, and lazy preprocessing approximation techniques. I will follow these patterns when applying these techniques."
+    NEW_TECHNIQUE_EXAMPLES.append(formatMessageForHistory(ai_message,True))
 
 def loadCodeBaseSummary(code_summary):
     with open("prompts/manufactured_code_base_summary.txt",'r') as file:

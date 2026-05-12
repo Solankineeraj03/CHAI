@@ -373,7 +373,7 @@ def getAppName(): #Cat 4
     """
     app_name = ""
     with open("target/application.txt", "r") as file:
-        app_name = file.read()
+        app_name = file.read().strip()
 
     return app_name
 
