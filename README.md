@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="/config/CheckMate_logo.png" alt="CHAI Logo" width="250">
-</p>
-
 # CHAI: Constraint-Guided Hardware-Aware Approximation for Intermittent Computing
 
 CHAI is an LLM-driven framework for automatically generating, validating, and tuning **software-level approximations** of C/embedded applications targeted at intermittent and energy-constrained platforms. CHAI takes a benchmark application, a hardware profile (e.g. MSP430, ARM Cortex-A53, RISC-V), and an energy trace, then produces approximated code variants that are (a) feasible on the target hardware, (b) compile and run correctly, and (c) tuned by Bayesian optimization to reduce checkpointing overhead while keeping output error within a configurable bound.
